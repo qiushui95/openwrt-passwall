@@ -43,5 +43,15 @@ local total_lines_text = translate("Total Lines")
 				totalLinesLabel.innerHTML = "<%= total_lines_text %> " + total_lines;
 			})
 	}
+
+	function sync_custom_rules() {
+		fetch('<%= api.url("update_rules") %>?update=custom', { method: 'POST' })
+			.then(() => {
+				alert('<%= translate("Sync task triggered") %>');
+			})
+			.catch(() => {
+				alert('<%= translate("Failed to trigger sync") %>');
+			});
+	}
 	//]]>
 </script>

@@ -1361,7 +1361,14 @@ start_crontab() {
 		else
 			echo "$t lua $APP_PATH/rule_update.lua log all cron > /dev/null 2>&1 &" >>/etc/crontabs/root
 		fi
-		echolog "配置定时任务：自动更新规则。"
+		 echolog "配置定时任务：自动更新规则。"
+	fi
+
+	enable_custom_list_sync=$(config_t_get global_rules enable_custom_list_sync 0)
+	if [ "$enable_custom_list_sync" = "1" ]; then
+		# 每小时触发一次自定义直连/代理列表同步
+		echo "0 * * * * lua $APP_PATH/rule_update.lua log custom cron > /dev/null 2>&1 &" >>/etc/crontabs/root
+		echolog "配置定时任务：每小时自动同步直连/代理列表。"
 	fi
 
 	TMP_SUB_PATH=$TMP_PATH/sub_crontabs

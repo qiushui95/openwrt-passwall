@@ -34,6 +34,7 @@ s:tab("proxy_list", translate("Proxy List"))
 s:tab("block_list", translate("Block List"))
 s:tab("lan_ip_list", translate("Lan IP List"))
 s:tab("route_hosts", translate("Route Hosts"))
+s:tab("custom_sync", translate("Auto Sync"))
 
 ---- Direct Hosts
 local direct_host = path .. "direct_host"
@@ -324,6 +325,29 @@ if fs.access(chnroute_path) then
 		<textarea id="chnroute_textarea" class="cbi-input-textarea" style="width: 100%%; margin-top: 10px;" rows="40" wrap="off" readonly="readonly"></textarea>
 	]], translate("Read List"))
 end
+
+-- [[ Auto Sync for Direct/Proxy Lists ]]
+o = s:taboption("custom_sync", Flag, "enable_custom_list_sync", translate("Enable auto sync for Direct/Proxy lists"))
+o.rmempty = false
+
+o = s:taboption("custom_sync", Value, "direct_host_url", translate("Direct Hosts Sync URL"))
+o.datatype = "string"
+o.placeholder = "https://example.com/direct_hosts.txt"
+
+o = s:taboption("custom_sync", Value, "direct_ip_url", translate("Direct IPs Sync URL"))
+o.datatype = "string"
+o.placeholder = "https://example.com/direct_ips.txt"
+
+o = s:taboption("custom_sync", Value, "proxy_host_url", translate("Proxy Hosts Sync URL"))
+o.datatype = "string"
+o.placeholder = "https://example.com/proxy_hosts.txt"
+
+o = s:taboption("custom_sync", Value, "proxy_ip_url", translate("Proxy IPs Sync URL"))
+o.datatype = "string"
+o.placeholder = "https://example.com/proxy_ips.txt"
+
+o = s:taboption("custom_sync", DummyValue, "_custom_sync_btn")
+o.rawhtml = string.format([[<input class="btn cbi-button cbi-button-apply" type="button" onclick="sync_custom_rules()" value="%s" />]], translate("Sync Now"))
 
 m:append(Template(appname .. "/rule_list/js"))
 

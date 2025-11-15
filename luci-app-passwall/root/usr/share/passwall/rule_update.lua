@@ -41,6 +41,13 @@ local geo2rule = uci:get(name, "@global_rules[0]", "geo2rule") or "0"
 local geoip_update_ok, geosite_update_ok = false, false
 asset_location = asset_location:match("/$") and asset_location or (asset_location .. "/")
 
+-- custom list sync
+local enable_custom_list_sync = uci:get(name, "@global_rules[0]", "enable_custom_list_sync") or "0"
+local direct_host_url = uci:get(name, "@global_rules[0]", "direct_host_url") or ""
+local direct_ip_url = uci:get(name, "@global_rules[0]", "direct_ip_url") or ""
+local proxy_host_url = uci:get(name, "@global_rules[0]", "proxy_host_url") or ""
+local proxy_ip_url = uci:get(name, "@global_rules[0]", "proxy_ip_url") or ""
+
 --兼容旧版本geo下载方式的配置，择机删除。
 if geoip_url:match(".*/([^/]+)$") == "latest" then
 	geoip_url = "https://github.com/Loyalsoldier/geoip/releases/latest/download/geoip.dat"
@@ -50,7 +57,7 @@ if geosite_url:match(".*/([^/]+)$") == "latest" then
 end
 
 if arg3 == "cron" then
-	arg2 = nil
+    arg2 = nil
 end
 
 local log = function(...)
@@ -124,6 +131,77 @@ local function line_count(file_path)
 		num = num + 1
 	end
 	return num;
+end
+
+local function file_md5(path)
+    return sys.exec("echo -n $(md5sum " .. path .. " | awk '{print $1}')"):gsub("\n", "")
+end
+
+local function fetch_custom_list(rule_name, list_type, url)
+    if not url or url == "" then return 0 end
+    local download_file_tmp = "/tmp/" .. rule_name .. "_dl"
+    local vali_file = "/tmp/" .. rule_name .. "_vali"
+    local unsort_file_tmp = "/tmp/" .. rule_name .. "_unsort"
+    os.remove(download_file_tmp)
+    os.remove(vali_file)
+    os.remove(unsort_file_tmp)
+    log(rule_name .. " 开始同步...")
+    local sret = curl(url, download_file_tmp, vali_file)
+    if sret == 200 and non_file_check(download_file_tmp, vali_file) then
+        log(rule_name .. " 下载文件过程出错，尝试重新下载。")
+        os.remove(download_file_tmp)
+        os.remove(vali_file)
+        sret = curl(url, download_file_tmp, vali_file)
+        if sret == 200 and non_file_check(download_file_tmp, vali_file) then
+            log(rule_name .. " 下载文件过程出错，请检查网络或下载链接后重试！")
+            sret = 0
+        end
+    end
+    os.remove(vali_file)
+    if sret ~= 200 then
+        log(rule_name .. " 同步失败，网络或URL异常。")
+        os.remove(download_file_tmp)
+        return 1
+    end
+
+    local out = io.open(unsort_file_tmp, "w")
+    for line in io.lines(download_file_tmp) do
+        local l = (line or ""):gsub("\r", "")
+        if not (string.find(l, comment_pattern) or l == "") then
+            if list_type == "domain" then
+                l = l:gsub("full:", "")
+                if not (string.find(l, ip_pattern) or string.find(l, ":")) then
+                    local match = string.match(l, domain_pattern)
+                    if match then out:write(match .. "\n") end
+                end
+            else -- ip
+                local v4 = l:match("^%d+%.%d+%.%d+%.%d+/%d+$") or l:match("^%d+%.%d+%.%d+%.%d+$")
+                local v6 = l:match("^[%x:]+/%d+$") or (l:match("^[%x:]+$") and l:find(":"))
+                if v4 then out:write(v4 .. "\n")
+                elseif v6 then out:write(l .. "\n") end
+            end
+        end
+    end
+    out:close()
+    os.remove(download_file_tmp)
+
+    sys.call("LC_ALL=C sort -u " .. unsort_file_tmp .. " > /tmp/" .. rule_name .. "_tmp")
+    local file_tmp = "/tmp/" .. rule_name .. "_tmp"
+    os.remove(unsort_file_tmp)
+
+    local target_path = rule_path .. "/" .. rule_name
+    local old_md5 = fs.access(target_path) and file_md5(target_path) or ""
+    local new_md5 = fs.access(file_tmp) and file_md5(file_tmp) or ""
+    if old_md5 ~= new_md5 and new_md5 ~= "" then
+        local count = line_count(file_tmp)
+        sys.exec("mv -f " .. file_tmp .. " " .. target_path)
+        reboot = 1
+        log(rule_name .. " 更新成功，总规则数 " .. count .. " 条。")
+    else
+        log(rule_name .. " 版本一致，无需更新。")
+        os.remove(file_tmp)
+    end
+    return 0
 end
 
 local function non_file_check(file_path, vali_file)
@@ -422,7 +500,7 @@ local function fetch_geosite()
 end
 
 if arg2 then
-	string.gsub(arg2, '[^' .. "," .. ']+', function(w)
+    string.gsub(arg2, '[^' .. "," .. ']+', function(w)
 		if w == "gfwlist" then
 			gfwlist_update = "1"
 		end
@@ -441,7 +519,10 @@ if arg2 then
 		if w == "geosite" then
 			geosite_update = "1"
 		end
-	end)
+        if w == "custom" then
+            custom_update = "1"
+        end
+    end)
 else
 	gfwlist_update = uci:get(name, "@global_rules[0]", "gfwlist_update") or "1"
 	chnroute_update = uci:get(name, "@global_rules[0]", "chnroute_update") or "1"
@@ -450,8 +531,14 @@ else
 	geoip_update = uci:get(name, "@global_rules[0]", "geoip_update") or "1"
 	geosite_update = uci:get(name, "@global_rules[0]", "geosite_update") or "1"
 end
-if gfwlist_update == "0" and chnroute_update == "0" and chnroute6_update == "0" and chnlist_update == "0" and geoip_update == "0" and geosite_update == "0" then
-	os.exit(0)
+local run_custom = 0
+if custom_update == "1" then
+    run_custom = 1
+elseif arg3 == "cron" and enable_custom_list_sync == "1" then
+    run_custom = 1
+end
+if gfwlist_update == "0" and chnroute_update == "0" and chnroute6_update == "0" and chnlist_update == "0" and geoip_update == "0" and geosite_update == "0" and run_custom == 0 then
+    os.exit(0)
 end
 
 log("开始更新规则...")
@@ -461,6 +548,14 @@ local function safe_call(func, err_msg)
 		log(debug.traceback())
 		log(err_msg)
 	end)
+end
+
+-- custom list sync
+if run_custom == 1 then
+    safe_call(function() fetch_custom_list("direct_host", "domain", direct_host_url) end, "更新direct_host发生错误...")
+    safe_call(function() fetch_custom_list("direct_ip", "ip", direct_ip_url) end, "更新direct_ip发生错误...")
+    safe_call(function() fetch_custom_list("proxy_host", "domain", proxy_host_url) end, "更新proxy_host发生错误...")
+    safe_call(function() fetch_custom_list("proxy_ip", "ip", proxy_ip_url) end, "更新proxy_ip发生错误...")
 end
 
 local function remove_tmp_geofile(name)
@@ -530,14 +625,14 @@ uci:set(name, "@global_rules[0]", "geosite_update", geosite_update)
 api.uci_save(uci, name, true)
 
 if reboot == 1 then
-	if arg3 == "cron" then
-		if not fs.access("/var/lock/" .. name .. ".lock") then
-			sys.call("touch /tmp/lock/" .. name .. "_cron.lock")
-		end
-	end
+    if arg3 == "cron" then
+        if not fs.access("/var/lock/" .. name .. ".lock") then
+            sys.call("touch /tmp/lock/" .. name .. "_cron.lock")
+        end
+    end
 
-	log("重启服务，应用新的规则。")
-	uci:set(name, "@global[0]", "flush_set", "1")
-	api.uci_save(uci, name, true, true)
+    log("重启服务，应用新的规则。")
+    uci:set(name, "@global[0]", "flush_set", "1")
+    api.uci_save(uci, name, true, true)
 end
 log("规则更新完毕...\n")
